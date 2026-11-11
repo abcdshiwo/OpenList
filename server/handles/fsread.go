@@ -2,7 +2,9 @@ package handles
 
 import (
 	"fmt"
+	"math"
 	stdpath "path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,12 +13,20 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/refreshguard"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+)
+
+// Explicit refresh guards: per-user+path rate limit, per-path dedupe, global concurrency cap.
+var (
+	refreshLimiter = refreshguard.NewLimiter()
+	refreshGroup   = refreshguard.NewGroup()
+	refreshCounter = refreshguard.NewCounter()
 )
 
 type ListReq struct {
@@ -94,14 +104,52 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		return
 	}
 	canWriteContentAtPath := common.CanWrite(user, meta, reqPath) && (user.CanWriteContent() || common.CanWriteContentBypassUserPerms(meta, reqPath))
-	if req.Refresh && !canWriteContentAtPath {
-		common.ErrorStrResp(c, "Refresh without permission", 403)
-		return
-	}
-	objs, err := fs.List(c.Request.Context(), reqPath, &fs.ListArgs{
+	listArgs := &fs.ListArgs{
 		Refresh:            req.Refresh,
 		WithStorageDetails: !user.IsGuest() && !setting.GetBool(conf.HideStorageDetails),
-	})
+	}
+	var objs []model.Obj
+	if req.Refresh {
+		if !canRefresh(user) {
+			common.ErrorStrResp(c, "Refresh without permission", 403)
+			return
+		}
+		if !user.IsAdmin() {
+			// Non-admin refreshes are rate limited per user and path; admins are exempt.
+			interval := setting.GetInt(conf.RefreshRateSeconds, 10)
+			burst := setting.GetInt(conf.RefreshRateBurst, 3)
+			rate := 0.0
+			if interval > 0 {
+				rate = 1 / float64(interval)
+			}
+			key := strconv.FormatUint(uint64(user.ID), 10) + "\x00" + reqPath
+			if ok, wait := refreshLimiter.Allow(key, rate, float64(burst), time.Now()); !ok {
+				seconds := int(math.Ceil(wait.Seconds()))
+				if seconds < 1 {
+					seconds = 1
+				}
+				c.Header("Retry-After", strconv.Itoa(seconds))
+				common.ErrorStrResp(c, fmt.Sprintf("Refresh too frequent, retry in %d seconds", seconds), 429)
+				return
+			}
+		}
+		// Deduplicate concurrent refreshes of the same path and cap upstream concurrency.
+		limit := setting.GetInt(conf.RefreshGlobalConcurrency, 4)
+		objs, err = refreshGroup.Do(reqPath, func() ([]model.Obj, error) {
+			if !refreshCounter.TryEnter(limit) {
+				return nil, refreshguard.ErrBusy
+			}
+			defer refreshCounter.Leave()
+			return fs.List(c.Request.Context(), reqPath, listArgs)
+		})
+		if errors.Is(err, refreshguard.ErrBusy) {
+			c.Header("Retry-After", "3")
+			common.ErrorStrResp(c, "Refresh is busy, retry later", 429)
+			return
+		}
+	} else {
+		objs, err = fs.List(c.Request.Context(), reqPath, listArgs)
+	}
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
@@ -124,6 +172,18 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		Provider:           provider,
 		DirectUploadTools:  directUploadTools,
 	})
+}
+
+// canRefresh reports whether the user may force a refresh of a listing.
+// Admins are always allowed; guests only when the site enables it; other users are allowed but rate limited.
+func canRefresh(user *model.User) bool {
+	if user.IsAdmin() {
+		return true
+	}
+	if user.IsGuest() {
+		return setting.GetBool(conf.RefreshAllowGuest)
+	}
+	return true
 }
 
 func FsDirs(c *gin.Context) {

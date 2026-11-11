@@ -161,6 +161,12 @@ const (
 	StreamMaxClientUploadSpeed            = "max_client_upload_speed"
 	StreamMaxServerDownloadSpeed          = "max_server_download_speed"
 	StreamMaxServerUploadSpeed            = "max_server_upload_speed"
+
+	// refresh
+	RefreshRateSeconds       = "refresh_rate_seconds"
+	RefreshRateBurst         = "refresh_rate_burst"
+	RefreshGlobalConcurrency = "refresh_global_concurrency"
+	RefreshAllowGuest        = "refresh_allow_guest"
 )
 
 const (
