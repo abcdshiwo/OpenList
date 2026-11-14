@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # OpenList (abcds fork) one-click installer. Defaults to PostgreSQL (Docker).
-# Usage: install-abcds.sh --binary /path/to/openlist [--name openlist] [--port 5244]
+# Usage: install-abcds.sh [--binary PATH | --url URL]   (default: download latest fork release)
+#        [--name openlist] [--port 5244]
 #        [--data-dir /opt/openlist] [--url URL] [--domain example.com] [--nginx]
 set -euo pipefail
 
@@ -63,7 +64,14 @@ docker exec "$PGC" pg_isready -U openlist >/dev/null 2>&1 || die "postgres not r
 TMPBIN=$(mktemp)
 if [ -n "$BINARY" ]; then [ -f "$BINARY" ] || die "binary not found: $BINARY"; cp "$BINARY" "$TMPBIN";
 elif [ -n "$URL" ]; then log "downloading binary: $URL"; curl -fsSL "$URL" -o "$TMPBIN";
-else die "provide --binary PATH or --url URL (prebuilt linux/amd64 OpenList binary)"; fi
+else
+  REPO="abcdshiwo/OpenList"
+  log "no --binary/--url; fetching latest release of $REPO"
+  ASSET_URL=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep -oE '"browser_download_url":[[:space:]]*"[^"]+"' | sed -E 's/.*"browser_download_url":[[:space:]]*"([^"]+)"/\1/' | grep -i linux | grep -i amd64 | head -1 || true)
+  [ -n "$ASSET_URL" ] || die "no linux/amd64 release asset found; pass --binary PATH or --url URL"
+  log "downloading: $ASSET_URL"
+  curl -fsSL "$ASSET_URL" -o "$TMPBIN"
+fi
 install -m755 "$TMPBIN" "$DATA_DIR/openlist"; rm -f "$TMPBIN"
 
 # --- config (partial; OpenList merges defaults on first run) ---
