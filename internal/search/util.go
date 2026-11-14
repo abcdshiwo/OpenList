@@ -1,7 +1,9 @@
 package search
 
 import (
+	"context"
 	"strings"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/drivers/openlist"
@@ -35,6 +37,29 @@ func WriteProgress(progress *model.IndexProgress) {
 	})
 	if err != nil {
 		log.Errorf("save progress error: %+v", err)
+	}
+}
+
+// RefreshProgress recounts the index and writes fresh progress so a per-path
+// update is visible in the admin UI (BuildIndex with count=false never writes it).
+func RefreshProgress() {
+	if instance == nil {
+		return
+	}
+	now := time.Now()
+	if c, ok := instance.(interface {
+		Count(ctx context.Context) (int64, error)
+	}); ok {
+		n, err := c.Count(context.Background())
+		if err != nil {
+			log.Errorf("refresh progress count error: %+v", err)
+			return
+		}
+		WriteProgress(&model.IndexProgress{ObjCount: uint64(n), IsDone: true, LastDoneTime: &now})
+		return
+	}
+	if p, err := Progress(); err == nil {
+		WriteProgress(&model.IndexProgress{ObjCount: p.ObjCount, IsDone: true, LastDoneTime: &now})
 	}
 }
 

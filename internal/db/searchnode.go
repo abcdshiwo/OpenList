@@ -35,7 +35,10 @@ func DeleteSearchNodesByParent(path string) error {
 	if err != nil {
 		return err
 	}
-	dir, name := stdpath.Split(path)
+	// stdpath.Split keeps a trailing slash on dir, but stored parents come from
+	// path.Dir (no trailing slash), so the self-node delete would never match and
+	// every per-path update would duplicate the directory's own node.
+	dir, name := stdpath.Dir(path), stdpath.Base(path)
 	return db.Where(fmt.Sprintf("%s = ? AND %s = ?",
 		columnName("parent"), columnName("name")),
 		dir, name).Delete(&model.SearchNode{}).Error
@@ -43,6 +46,12 @@ func DeleteSearchNodesByParent(path string) error {
 
 func ClearSearchNodes() error {
 	return db.Where("1 = 1").Delete(&model.SearchNode{}).Error
+}
+
+func CountSearchNodes() (int64, error) {
+	var count int64
+	err := db.Model(&model.SearchNode{}).Count(&count).Error
+	return count, err
 }
 
 func GetSearchNodesByParent(parent string) ([]model.SearchNode, error) {

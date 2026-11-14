@@ -66,7 +66,9 @@ func UpdateIndex(c *gin.Context) {
 			conf.SlicesMap[conf.IgnorePaths], req.MaxDepth, false)
 		if err != nil {
 			log.Errorf("update index error: %+v", err)
+			return
 		}
+		search.RefreshProgress()
 	}()
 	common.SuccessResp(c)
 }

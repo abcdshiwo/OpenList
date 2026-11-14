@@ -34,6 +34,10 @@ func (D DB) Del(ctx context.Context, path string) error {
 	return db.DeleteSearchNodesByParent(path)
 }
 
+func (D DB) Count(ctx context.Context) (int64, error) {
+	return db.CountSearchNodes()
+}
+
 func (D DB) Release(ctx context.Context) error {
 	return nil
 }
