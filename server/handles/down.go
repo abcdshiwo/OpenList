@@ -43,6 +43,13 @@ func Down(c *gin.Context) {
 	}
 }
 
+// Play handles /p/ (playback) requests. It marks the context so Proxy()
+// prefers the playback proxy URL (play_proxy_url) over the download one.
+func Play(c *gin.Context) {
+	c.Set("play_proxy", true)
+	Proxy(c)
+}
+
 func Proxy(c *gin.Context) {
 	rawPath := c.Request.Context().Value(conf.PathKey).(string)
 	filename := stdpath.Base(rawPath)
@@ -53,7 +60,14 @@ func Proxy(c *gin.Context) {
 	}
 	if canProxy(storage, filename) {
 		if _, ok := c.GetQuery("d"); !ok {
-			if url := common.GenerateDownProxyURL(storage.GetStorage(), rawPath); url != "" {
+			url := ""
+			if c.GetBool("play_proxy") {
+				url = common.GeneratePlayProxyURL(storage.GetStorage(), rawPath)
+			}
+			if url == "" {
+				url = common.GenerateDownProxyURL(storage.GetStorage(), rawPath)
+			}
+			if url != "" {
 				c.Redirect(302, url)
 				return
 			}

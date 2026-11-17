@@ -142,8 +142,8 @@ func (ww *WrittenResponseWriter) IsWritten() bool {
 	return ww.written
 }
 
-func GenerateDownProxyURL(storage *model.Storage, reqPath string) string {
-	if storage.DownProxyURL == "" {
+func generateProxyURL(baseURL string, storage *model.Storage, reqPath string) string {
+	if baseURL == "" {
 		return ""
 	}
 	query := ""
@@ -151,8 +151,19 @@ func GenerateDownProxyURL(storage *model.Storage, reqPath string) string {
 		query = "?sign=" + sign.Sign(reqPath)
 	}
 	return fmt.Sprintf("%s%s%s",
-		strings.Split(storage.DownProxyURL, "\n")[0],
+		strings.Split(baseURL, "\n")[0],
 		utils.EncodePath(reqPath, true),
 		query,
 	)
+}
+
+func GenerateDownProxyURL(storage *model.Storage, reqPath string) string {
+	return generateProxyURL(storage.DownProxyURL, storage, reqPath)
+}
+
+// GeneratePlayProxyURL builds the playback proxy URL used by /p/ links.
+// Returns "" when play_proxy_url is unset so callers fall back to the
+// download proxy URL (backward compatible).
+func GeneratePlayProxyURL(storage *model.Storage, reqPath string) string {
+	return generateProxyURL(storage.PlayProxyURL, storage, reqPath)
 }

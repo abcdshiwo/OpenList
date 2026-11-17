@@ -34,6 +34,9 @@ type Proxy struct {
 	WebdavPolicy string `json:"webdav_policy"`
 	ProxyRange   bool   `json:"proxy_range"`
 	DownProxyURL string `json:"down_proxy_url"`
+	// PlayProxyURL is used for playback (/p/) links (players, open-with).
+	// When empty, playback falls back to DownProxyURL.
+	PlayProxyURL string `json:"play_proxy_url"`
 	// Disable sign for DownProxyURL
 	DisableProxySign bool `json:"disable_proxy_sign"`
 }

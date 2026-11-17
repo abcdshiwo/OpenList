@@ -140,6 +140,11 @@ func getMainItems(config driver.Config) []driver.Item {
 		Type: conf.TypeText,
 	})
 	items = append(items, driver.Item{
+		Name: "play_proxy_url",
+		Type: conf.TypeText,
+		Help: "Proxy URL for playback; empty = use download proxy URL",
+	})
+	items = append(items, driver.Item{
 		Name:    "disable_proxy_sign",
 		Type:    conf.TypeBool,
 		Default: "false",
