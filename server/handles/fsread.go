@@ -1,6 +1,7 @@
 package handles
 
 import (
+	"encoding/base64"
 	"fmt"
 	"math"
 	stdpath "path"
@@ -285,10 +286,31 @@ func pagination(objs []model.Obj, req *model.PageReq) (int, []model.Obj) {
 	return total, objs[start:end]
 }
 
+// proxyThumbURL rewrites a driver thumbnail URL to the storage's download
+// proxy /thumb/ relay (signed), so clients that cannot reach the original
+// host (e.g. Google behind the GFW) still load covers. No-op when disabled,
+// when the storage has no download proxy, or when already proxied.
+func proxyThumbURL(thumb, downProxyURL string) string {
+	if thumb == "" || !setting.GetBool(conf.ThumbProxy) {
+		return thumb
+	}
+	base := strings.TrimRight(strings.TrimSpace(strings.Split(downProxyURL, "\n")[0]), "/")
+	if base == "" || strings.Contains(thumb, "/thumb/") {
+		return thumb
+	}
+	token := base64.RawURLEncoding.EncodeToString([]byte(thumb))
+	return base + "/thumb/" + token + "?sign=" + sign.Sign(token)
+}
+
 func toObjsResp(objs []model.Obj, parent string, encrypt bool) []ObjResp {
+	var downProxy string
+	if st, err := fs.GetStorage(parent, &fs.GetStoragesArgs{}); err == nil {
+		downProxy = st.GetStorage().DownProxyURL
+	}
 	var resp []ObjResp
 	for _, obj := range objs {
 		thumb, _ := model.GetThumb(obj)
+		thumb = proxyThumbURL(thumb, downProxy)
 		mountDetails, _ := model.GetStorageDetails(obj)
 		resp = append(resp, ObjResp{
 			Name:         obj.GetName(),
@@ -415,6 +437,9 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 	}
 	parentMeta, _ := op.GetNearestMeta(parentPath)
 	thumb, _ := model.GetThumb(obj)
+	if st, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
+		thumb = proxyThumbURL(thumb, st.GetStorage().DownProxyURL)
+	}
 	mountDetails, _ := model.GetStorageDetails(obj)
 	common.SuccessResp(c, FsGetResp{
 		ObjResp: ObjResp{

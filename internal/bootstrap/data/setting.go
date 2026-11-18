@@ -172,6 +172,7 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.RefreshRateBurst, Value: "3", Type: conf.TypeNumber, Group: model.GLOBAL, Flag: model.PRIVATE, Help: "burst allowance of explicit refreshes for a non-admin user"},
 		{Key: conf.RefreshGlobalConcurrency, Value: "4", Type: conf.TypeNumber, Group: model.GLOBAL, Flag: model.PRIVATE, Help: "max concurrent upstream refreshes across the site"},
 		{Key: conf.RefreshAllowGuest, Value: "false", Type: conf.TypeBool, Group: model.GLOBAL, Flag: model.PRIVATE, Help: "allow the guest user to force a refresh"},
+		{Key: conf.ThumbProxy, Value: "false", Type: conf.TypeBool, Group: model.GLOBAL, Flag: model.PRIVATE, Help: "relay video thumbnails through the storage download proxy (/thumb/) so clients behind the GFW can load covers"},
 		{Key: conf.SignAll, Value: "true", Type: conf.TypeBool, Group: model.GLOBAL, Flag: model.PRIVATE},
 		{
 			Key: conf.PrivacyRegs, Value: `(?:(?:\d|[1-9]\d|1\d\d|2[0-4]\d|25[0-5])\.){3}(?:\d|[1-9]\d|1\d\d|2[0-4]\d|25[0-5])

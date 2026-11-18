@@ -167,6 +167,8 @@ const (
 	RefreshRateBurst         = "refresh_rate_burst"
 	RefreshGlobalConcurrency = "refresh_global_concurrency"
 	RefreshAllowGuest        = "refresh_allow_guest"
+	// thumbnail relay
+	ThumbProxy = "thumb_proxy"
 )
 
 const (
