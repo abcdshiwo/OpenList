@@ -1,16 +1,39 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/OpenListTeam/Logo/main/logo.svg" width="128" height="128" alt="logo" />
 
-  <p><em>OpenList is a resilient, long-term governance, community-driven fork of AList — built to defend open source against trust-based attacks.</em></p>
+  <h1>OpenList · abcds 维护版</h1>
+  <p><em>abcdshiwo 维护的 OpenList fork：紧跟上游 main，叠加自建网盘加速、播放/下载分流与抗扫描定制。</em></p>
 
   <img src="https://goreportcard.com/badge/github.com/OpenListTeam/OpenList/v3" alt="latest version" />
   <a href="https://github.com/OpenListTeam/OpenList/blob/main/LICENSE"><img src="https://img.shields.io/github/license/OpenListTeam/OpenList" alt="License" /></a>
   <a href="https://github.com/OpenListTeam/OpenList/actions?query=workflow%3ABuild"><img src="https://img.shields.io/github/actions/workflow/status/OpenListTeam/OpenList/build.yml?branch=main" alt="Build status" /></a>
-  <a href="https://github.com/OpenListTeam/OpenList/releases"><img src="https://img.shields.io/github/release/OpenListTeam/OpenList" alt="latest version" /></a>
+  <a href="https://github.com/abcdshiwo/OpenList/releases"><img src="https://img.shields.io/github/release/abcdshiwo/OpenList" alt="latest version" /></a>
 
   <a href="https://github.com/OpenListTeam/OpenList/discussions"><img src="https://img.shields.io/github/discussions/OpenListTeam/OpenList?color=%23ED8936" alt="discussions" /></a>
   <a href="https://github.com/OpenListTeam/OpenList/releases"><img src="https://img.shields.io/github/downloads/OpenListTeam/OpenList/total?color=%239F7AEA&logo=github" alt="Downloads" /></a>
 </div>
+
+---
+
+> 本仓库是 [OpenListTeam/OpenList](https://github.com/OpenListTeam/OpenList) 的 fork（AGPL-3.0），由 abcdshiwo 维护，工作分支 `main`，定期合并上游更新。上游原始声明与许可证保留于下文。
+
+## 本 fork 的定制（相对上游）
+
+- **F1 播放/下载代理分流**：存储新增 `play_proxy_url`；`/p/`（播放，含网页播放器与 PotPlayer/mpv 外部播放器）走播放代理，`/d/`（下载/分享/WebDAV）走下载代理；留空回退下载代理。
+- **F2 刷新权限独立 + 分级限流**：refresh 与编辑权限解耦，按用户/路径限流 + 全局并发上限 + 单飞去重。
+- **缩略图中继**：`thumb_proxy` 开关，视频封面经下载代理 `/thumb/` 签名中继 + 磁盘 LRU 缓存，国内可达且不占反代域名流量。
+- **索引按路径更新修复**：消除目录自身节点重复。
+- **默认简体中文**：前端默认 zh-CN，手动选择仍持久化。
+- **一键安装**：`install-abcds.sh` 默认 PostgreSQL（Docker），零参数拉取最新 fork release。
+- 配套 [openlist-proxy（abcds 维护版）](https://github.com/abcdshiwo/openlist-proxy)：抗扫描 stealth、Accept-Ranges 修复、缩略图中继。
+
+## 安装 / 升级
+
+```bash
+bash install-abcds.sh
+```
+
+默认部署 PostgreSQL；二进制见 [Releases](https://github.com/abcdshiwo/OpenList/releases)。
 
 ---
 
