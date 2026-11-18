@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -20,8 +21,8 @@ import (
 
 type ManifestIcon struct {
 	Src   string `json:"src"`
-	Sizes string `json:"sizes"`
-	Type  string `json:"type"`
+	Sizes string `json:"sizes,omitempty"`
+	Type  string `json:"type,omitempty"`
 }
 
 type Manifest struct {
@@ -98,9 +99,9 @@ func initIndex(siteConfig SiteConfig) {
 		manifestPath = siteConfig.BasePath + "/manifest.json"
 	}
 	replaceMap := map[string]string{
-		"cdn: undefined":                    fmt.Sprintf("cdn: '%s'", siteConfig.Cdn),
-		"base_path: undefined":              fmt.Sprintf("base_path: '%s'", siteConfig.BasePath),
-		`href="/manifest.json"`:             fmt.Sprintf(`href="%s"`, manifestPath),
+		"cdn: undefined":        fmt.Sprintf("cdn: '%s'", siteConfig.Cdn),
+		"base_path: undefined":  fmt.Sprintf("base_path: '%s'", siteConfig.BasePath),
+		`href="/manifest.json"`: fmt.Sprintf(`href="%s"`, manifestPath),
 	}
 	conf.RawIndexHtml = replaceStrings(conf.RawIndexHtml, replaceMap)
 	UpdateIndex()
@@ -131,13 +132,26 @@ func UpdateIndex() {
 	utils.Log.Debug("Index.html update completed")
 }
 
+func manifestIcon(src string) ManifestIcon {
+	icon := ManifestIcon{Src: src, Sizes: "any"}
+	u, err := url.Parse(src)
+	if err != nil {
+		return icon
+	}
+	mimeType := utils.GetMimeType(u.Path)
+	if strings.HasPrefix(mimeType, "image/") {
+		icon.Type = mimeType
+	}
+	return icon
+}
+
 func ManifestJSON(c *gin.Context) {
 	// Get site configuration to ensure consistent base path handling
 	siteConfig := getSiteConfig()
-	
+
 	// Get site title from settings
 	siteTitle := setting.GetStr(conf.SiteTitle)
-	
+
 	// Get logo from settings, use the first line (light theme logo)
 	logoSetting := setting.GetStr(conf.Logo)
 	logoUrl := strings.Split(logoSetting, "\n")[0]
@@ -156,18 +170,12 @@ func ManifestJSON(c *gin.Context) {
 		Scope:    scope,
 		StartURL: startURL,
 		Name:     siteTitle,
-		Icons: []ManifestIcon{
-			{
-				Src:   logoUrl,
-				Sizes: "512x512",
-				Type:  "image/png",
-			},
-		},
+		Icons:    []ManifestIcon{manifestIcon(logoUrl)},
 	}
 
 	c.Header("Content-Type", "application/json")
 	c.Header("Cache-Control", "public, max-age=3600") // cache for 1 hour
-	
+
 	if err := json.NewEncoder(c.Writer).Encode(manifest); err != nil {
 		utils.Log.Errorf("Failed to encode manifest.json: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate manifest"})
@@ -181,7 +189,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	initStatic()
 	initIndex(siteConfig)
 	folders := []string{"assets", "images", "streamer", "static"}
-	
+
 	if conf.Conf.Cdn == "" {
 		utils.Log.Debug("Setting up static file serving...")
 		r.Use(func(c *gin.Context) {

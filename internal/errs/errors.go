@@ -18,6 +18,11 @@ var (
 	StorageNotInit     = errors.New("storage not init")
 	StreamIncomplete   = errors.New("upload/download stream incomplete, possible network issue")
 	StreamPeekFail     = errors.New("StreamPeekFail")
+	TemporaryCapacity  = errors.New("temporary capacity unavailable")
+
+	// DailyFlowLimitExceeded 目标网盘账号当日的上传/转存流量已用尽。
+	// 这是账号级状态，重试或换文件都不会成功，只能等次日重置或更换账号。
+	DailyFlowLimitExceeded = errors.New("daily transfer flow limit exceeded")
 
 	UnknownArchiveFormat      = errors.New("unknown archive format")
 	WrongArchivePassword      = errors.New("wrong archive password")

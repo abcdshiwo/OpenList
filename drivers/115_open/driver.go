@@ -2,6 +2,7 @@ package _115_open
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	stdpath "path"
@@ -14,6 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
+	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
@@ -38,16 +40,44 @@ func (d *Open115) GetAddition() driver.Additional {
 	return &d.Addition
 }
 
+// onTokenRefreshed persists the rotated token pair. 115 Open refresh tokens are
+// single use: once a new one is issued the previous one is rejected, so a lost
+// write would leave the storage broken after a restart.
+//
+// The SDK assigns the response to its own fields before invoking this callback,
+// so an empty refresh token in the response would also clear the value used by
+// the next refresh request. Restore both states from the addition, which keeps
+// the last usable token when the field is missing.
+func (d *Open115) onTokenRefreshed(accessToken, refreshToken string) {
+	if accessToken != "" {
+		d.Addition.AccessToken = accessToken
+	}
+	if refreshToken != "" {
+		d.Addition.RefreshToken = refreshToken
+	}
+	if d.client != nil {
+		d.client.SetAccessToken(d.Addition.AccessToken)
+		d.client.SetRefreshToken(d.Addition.RefreshToken)
+	}
+	op.MustSaveDriverStorage(d)
+}
+
 func (d *Open115) Init(ctx context.Context) error {
+	if d.Addition.AccessToken == "" && d.Addition.RefreshToken == "" {
+		return errors.New("access token or refresh token is required")
+	}
 	d.client = sdk.New(sdk.WithRefreshToken(d.Addition.RefreshToken),
 		sdk.WithAccessToken(d.Addition.AccessToken),
-		sdk.WithOnRefreshToken(func(s1, s2 string) {
-			d.Addition.AccessToken = s1
-			d.Addition.RefreshToken = s2
-			op.MustSaveDriverStorage(d)
-		}))
+		sdk.WithOnRefreshToken(d.onTokenRefreshed))
 	if flags.Debug || flags.Dev {
 		d.client.SetDebug(true)
+	}
+	if d.Addition.AccessToken == "" {
+		// Without an access token the SDK would send an unauthenticated request
+		// first and only then refresh, surfacing a misleading "40100000 参数错误".
+		if _, err := d.client.RefreshToken(ctx); err != nil {
+			return err
+		}
 	}
 	_, err := d.client.UserInfo(ctx)
 	if err != nil {
@@ -169,15 +199,71 @@ func (d *Open115) Get(ctx context.Context, path string) (model.Obj, error) {
 	path = stdpath.Join(d.parentPath, path)
 	resp, err := d.client.GetFolderInfoByPath(ctx, path)
 	if err != nil {
+		// SDK-level "object not found" (empty array response from API)
+		if errors.Is(err, sdk.ErrObjectNotFound) {
+			return d.getFromParent(ctx, path, "")
+		}
+		// API-level error response (State=false), treat as not found
+		// since this is a path-lookup that can't resolve the target
+		var apiErr *sdk.Error
+		if errors.As(err, &apiErr) {
+			return nil, errs.ObjectNotFound
+		}
 		return nil, err
 	}
-	return &Obj{
+	// Handle null/empty response (e.g., API returns null data for non-existent path)
+	if resp.FileID == "" {
+		return nil, errs.ObjectNotFound
+	}
+	obj := &Obj{
 		Fid:  resp.FileID,
 		Fn:   resp.FileName,
 		Fc:   resp.FileCategory,
 		Sha1: resp.Sha1,
 		Pc:   resp.PickCode,
-	}, nil
+		FS:   resp.SizeByte,
+		Upt:  parseTime(resp.UTime),
+		UpPt: parseTime(resp.PTime),
+	}
+	if !obj.IsDir() && obj.ModTime().Unix() <= 0 {
+		return d.getFromParent(ctx, path, obj.GetID())
+	}
+	return obj, nil
+}
+
+func (d *Open115) getFromParent(ctx context.Context, path, id string) (model.Obj, error) {
+	path = stdpath.Clean(path)
+	parent, name := stdpath.Split(path)
+	parent = stdpath.Clean(parent)
+	parentID := d.GetRootId()
+	if stdpath.Clean(parent) != stdpath.Clean(d.parentPath) {
+		if err := d.WaitLimit(ctx); err != nil {
+			return nil, err
+		}
+		parentInfo, err := d.client.GetFolderInfoByPath(ctx, parent)
+		if err != nil {
+			if !errors.Is(err, sdk.ErrObjectNotFound) {
+				return nil, err
+			}
+			parentObj, err := d.getFromParent(ctx, parent, "")
+			if err != nil {
+				return nil, err
+			}
+			parentID = parentObj.GetID()
+		} else {
+			parentID = parentInfo.FileID
+		}
+	}
+	files, err := d.List(ctx, &Obj{Fid: parentID, Fc: "0"}, model.ListArgs{})
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		if (id != "" && file.GetID() == id) || (id == "" && file.GetName() == name) {
+			return file, nil
+		}
+	}
+	return nil, errs.ObjectNotFound
 }
 
 func (d *Open115) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error) {
@@ -199,18 +285,15 @@ func (d *Open115) MakeDir(ctx context.Context, parentDir model.Obj, dirName stri
 	}, nil
 }
 
-func (d *Open115) Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+func (d *Open115) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
+		return err
 	}
 	_, err := d.client.Move(ctx, &sdk.MoveReq{
 		FileIDs: srcObj.GetID(),
 		ToCid:   dstDir.GetID(),
 	})
-	if err != nil {
-		return nil, err
-	}
-	return srcObj, nil
+	return err
 }
 
 func (d *Open115) Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error) {
@@ -218,7 +301,7 @@ func (d *Open115) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 		return nil, err
 	}
 	_, err := d.client.UpdateFile(ctx, &sdk.UpdateFileReq{
-		FileID:  srcObj.GetID(),
+		FileID:   srcObj.GetID(),
 		FileName: newName,
 	})
 	if err != nil {
@@ -227,23 +310,21 @@ func (d *Open115) Rename(ctx context.Context, srcObj model.Obj, newName string) 
 	obj, ok := srcObj.(*Obj)
 	if ok {
 		obj.Fn = newName
+		return srcObj, nil
 	}
-	return srcObj, nil
+	return nil, nil
 }
 
-func (d *Open115) Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error) {
+func (d *Open115) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	if err := d.WaitLimit(ctx); err != nil {
-		return nil, err
+		return err
 	}
 	_, err := d.client.Copy(ctx, &sdk.CopyReq{
 		PID:     dstDir.GetID(),
 		FileID:  srcObj.GetID(),
 		NoDupli: "1",
 	})
-	if err != nil {
-		return nil, err
-	}
-	return srcObj, nil
+	return err
 }
 
 func (d *Open115) Remove(ctx context.Context, obj model.Obj) error {

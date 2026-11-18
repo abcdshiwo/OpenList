@@ -1,7 +1,7 @@
 set -e
 appName="openlist"
 builtAt="$(date +'%F %T %z')"
-gitAuthor="The OpenList Projects Contributors <noreply@openlist.team>"
+gitAuthor="The OpenList Projects Contributors <noreply@oplist.org>"
 gitCommit=$(git log --pretty=format:"%h" -1)
 
 # Set frontend repository, default to OpenListTeam/OpenList-Frontend
@@ -10,12 +10,6 @@ frontendRepo="${FRONTEND_REPO:-OpenListTeam/OpenList-Frontend}"
 githubAuthArgs=""
 if [ -n "$GITHUB_TOKEN" ]; then
   githubAuthArgs="--header \"Authorization: Bearer $GITHUB_TOKEN\""
-fi
-
-# Check for lite parameter
-useLite=false
-if [[ "$*" == *"lite"* ]]; then
-  useLite=true
 fi
 
 if [ "$1" = "dev" ]; then
@@ -33,11 +27,6 @@ fi
 
 echo "backend version: $version"
 echo "frontend version: $webVersion"
-if [ "$useLite" = true ]; then
-  echo "using lite frontend"
-else
-  echo "using standard frontend"
-fi
 
 ldflags="\
 -w -s \
@@ -96,12 +85,35 @@ AssertStaticBinary() {
   return 0
 }
 
+# Select the standard (non-lite) frontend dist tarball from a release asset list.
+# Released frontend versions still publish both `openlist-frontend-dist-<ver>.tar.gz`
+# and `openlist-frontend-dist-lite-<ver>.tar.gz`, so match the standard name exactly
+# instead of relying on the lite artifact being absent. Exactly one match is required:
+# a silent mismatch would hand a multi-line or empty string to curl.
+ResolveFrontendDistURL() {
+  local assets="$1"
+  local releaseName="$2"
+  local url
+  local count
+
+  url=$(printf '%s\n' "$assets" | grep -E "openlist-frontend-dist-v[0-9][^/]*\.tar\.gz$" || true)
+  count=$(printf '%s\n' "$url" | grep -c . || true)
+  if [ "$count" -ne 1 ]; then
+    echo "Error: expected exactly 1 standard frontend dist tarball in $releaseName, got $count" >&2
+    if [ "$count" -gt 0 ]; then
+      printf '%s\n' "$url" >&2
+    fi
+    return 1
+  fi
+
+  printf '%s\n' "$url"
+}
+
 FetchWebRolling() {
-  pre_release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/tags/rolling\"")
+  pre_release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/tags/edge\"")
   pre_release_assets=$(echo "$pre_release_json" | jq -r '.assets[].browser_download_url')
-  
-  # There is no lite for rolling
-  pre_release_tar_url=$(echo "$pre_release_assets" | grep "openlist-frontend-dist" | grep -v "lite" | grep "\.tar\.gz$")
+
+  pre_release_tar_url=$(ResolveFrontendDistURL "$pre_release_assets" "edge")
 
   curl -fsSL "$pre_release_tar_url" -o dist.tar.gz
   rm -rf public/dist && mkdir -p public/dist
@@ -112,12 +124,7 @@ FetchWebRolling() {
 FetchWebRelease() {
   release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/latest\"")
   release_assets=$(echo "$release_json" | jq -r '.assets[].browser_download_url')
-  
-  if [ "$useLite" = true ]; then
-    release_tar_url=$(echo "$release_assets" | grep "openlist-frontend-dist-lite" | grep "\.tar\.gz$")
-  else
-    release_tar_url=$(echo "$release_assets" | grep "openlist-frontend-dist" | grep -v "lite" | grep "\.tar\.gz$")
-  fi
+  release_tar_url=$(ResolveFrontendDistURL "$release_assets" "${webVersion:-latest}")
   
   curl -fsSL "$release_tar_url" -o dist.tar.gz
   rm -rf public/dist && mkdir -p public/dist
@@ -178,7 +185,6 @@ BuildWin7() {
 }
 
 BuildDev() {
-  rm -rf .git/
   mkdir -p "dist"
   muslflags="$(GetMuslStaticLdflags)"
   BASE="https://github.com/OpenListTeam/musl-compilers/releases/latest/download/"
@@ -269,7 +275,6 @@ BuildDockerMultiplatform() {
 }
 
 BuildRelease() {
-  rm -rf .git/
   mkdir -p "build"
   BuildWinArm64 ./build/"$appName"-windows-arm64.exe
   BuildWin7 ./build/"$appName"-windows7
@@ -289,7 +294,7 @@ BuildRelease() {
 BuildLoongGLIBC() {
   local target_abi="$2"
   local output_file="$1"
-  local oldWorldGoVersion="1.25.0"
+  local oldWorldGoVersion="1.26.4"
   local loong_tags
   loong_tags=$(GetBuildTagsForTarget "linux-loong64")
   
@@ -309,13 +314,13 @@ BuildLoongGLIBC() {
     
     # Download and setup patched Go compiler for old-world
     if ! curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" \
-      "https://github.com/loong64/loong64-abi1.0-toolchains/releases/download/20250821/go${oldWorldGoVersion}.linux-amd64.tar.gz" \
+      "https://github.com/loong64-abi1-0/golang/releases/download/go${oldWorldGoVersion}/go${oldWorldGoVersion}.linux-amd64.tar.gz" \
       -o go-loong64-abi1.0.tar.gz; then
       echo "Error: Failed to download patched Go compiler for old-world ABI1.0"
       if [ -n "$GITHUB_TOKEN" ]; then
         echo "Error output from curl:"
         curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" \
-          "https://github.com/loong64/loong64-abi1.0-toolchains/releases/download/20250821/go${oldWorldGoVersion}.linux-amd64.tar.gz" \
+          "https://github.com/loong64-abi1-0/golang/releases/download/go${oldWorldGoVersion}/go${oldWorldGoVersion}.linux-amd64.tar.gz" \
           -o go-loong64-abi1.0.tar.gz || true
       fi
       return 1
@@ -442,7 +447,6 @@ BuildLoongGLIBC() {
 }
 
 BuildReleaseLinuxMusl() {
-  rm -rf .git/
   mkdir -p "build"
   muslflags="$(GetMuslStaticLdflags)"
   BASE="https://github.com/OpenListTeam/musl-compilers/releases/latest/download/"
@@ -471,7 +475,6 @@ BuildReleaseLinuxMusl() {
 }
 
 BuildReleaseLinuxMuslArm() {
-  rm -rf .git/
   mkdir -p "build"
   muslflags="$(GetMuslStaticLdflags)"
   BASE="https://github.com/OpenListTeam/musl-compilers/releases/latest/download/"
@@ -502,7 +505,6 @@ BuildReleaseLinuxMuslArm() {
 
 
 BuildReleaseAndroid() {
-  rm -rf .git/
   mkdir -p "build"
   wget https://dl.google.com/android/repository/android-ndk-r26b-linux.zip
   unzip android-ndk-r26b-linux.zip
@@ -523,7 +525,6 @@ BuildReleaseAndroid() {
 }
 
 BuildReleaseFreeBSD() {
-  rm -rf .git/
   mkdir -p "build/freebsd"
   
   # Get latest FreeBSD 14.x release version from GitHub 
@@ -537,8 +538,8 @@ BuildReleaseFreeBSD() {
     sed 's/\.0$//')
   
   if [ -z "$freebsd_version" ]; then
-    echo "Failed to get FreeBSD version, falling back to 14.3"
-    freebsd_version="14.3"
+    echo "Failed to get FreeBSD version, falling back to 14.4"
+    freebsd_version="14.4"
   fi
 
   echo "Using FreeBSD version: $freebsd_version"
@@ -569,52 +570,39 @@ MakeRelease() {
     rm -rv compress
   fi
   mkdir compress
-  
-  # Add -lite suffix if useLite is true
-  liteSuffix=""
-  if [ "$useLite" = true ]; then
-    liteSuffix="-lite"
-  fi
-  
+
   for i in $(find . -type f -name "$appName-linux-*"); do
     cp "$i" "$appName"
-    tar -czvf compress/"$i$liteSuffix".tar.gz "$appName"
+    tar -czvf compress/"$i".tar.gz "$appName"
     rm -f "$appName"
   done
     for i in $(find . -type f -name "$appName-android-*"); do
     cp "$i" "$appName"
-    tar -czvf compress/"$i$liteSuffix".tar.gz "$appName"
+    tar -czvf compress/"$i".tar.gz "$appName"
     rm -f "$appName"
   done
   for i in $(find . -type f -name "$appName-darwin-*"); do
     cp "$i" "$appName"
-    tar -czvf compress/"$i$liteSuffix".tar.gz "$appName"
+    tar -czvf compress/"$i".tar.gz "$appName"
     rm -f "$appName"
   done
   for i in $(find . -type f -name "$appName-freebsd-*"); do
     cp "$i" "$appName"
-    tar -czvf compress/"$i$liteSuffix".tar.gz "$appName"
+    tar -czvf compress/"$i".tar.gz "$appName"
     rm -f "$appName"
   done
   for i in $(find . -type f \( -name "$appName-windows-*" -o -name "$appName-windows7-*" \)); do
     cp "$i" "$appName".exe
-    zip compress/$(echo $i | sed 's/\.[^.]*$//')$liteSuffix.zip "$appName".exe
+    zip compress/$(echo $i | sed 's/\.[^.]*$//').zip "$appName".exe
     rm -f "$appName".exe
   done
   cd compress
-  
-  # Handle MD5 filename - add -lite suffix only if not already present
-  md5FileName="$1"
-  if [ "$useLite" = true ] && [[ "$1" != *"-lite.txt" ]]; then
-    md5FileName=$(echo "$1" | sed 's/\.txt$/-lite.txt/')
-  fi
-  
-  find . -type f -print0 | xargs -0 md5sum >"$md5FileName"
-  cat "$md5FileName"
+
+  find . -type f -print0 | xargs -0 md5sum >"$1"
+  cat "$1"
   cd ../..
 }
 
-# Parse parameters to handle lite parameter position flexibility
 buildType=""
 dockerType=""
 otherParam=""
@@ -630,9 +618,6 @@ for arg in "$@"; do
       if [ -z "$dockerType" ]; then
         dockerType="$arg"
       fi
-      ;;
-    lite)
-      # lite parameter is already handled above
       ;;
     *)
       if [ -z "$otherParam" ]; then
@@ -665,41 +650,21 @@ elif [ "$buildType" = "release" -o "$buildType" = "beta" ]; then
     BuildDockerMultiplatform
   elif [ "$dockerType" = "linux_musl_arm" ]; then
     BuildReleaseLinuxMuslArm
-    if [ "$useLite" = true ]; then
-      MakeRelease "md5-linux-musl-arm-lite.txt"
-    else
-      MakeRelease "md5-linux-musl-arm.txt"
-    fi
+    MakeRelease "md5-linux-musl-arm.txt"
   elif [ "$dockerType" = "linux_musl" ]; then
     BuildReleaseLinuxMusl
-    if [ "$useLite" = true ]; then
-      MakeRelease "md5-linux-musl-lite.txt"
-    else
-      MakeRelease "md5-linux-musl.txt"
-    fi
+    MakeRelease "md5-linux-musl.txt"
   elif [ "$dockerType" = "android" ]; then
     BuildReleaseAndroid
-    if [ "$useLite" = true ]; then
-      MakeRelease "md5-android-lite.txt"
-    else
-      MakeRelease "md5-android.txt"
-    fi
+    MakeRelease "md5-android.txt"
   elif [ "$dockerType" = "freebsd" ]; then
     BuildReleaseFreeBSD
-    if [ "$useLite" = true ]; then
-      MakeRelease "md5-freebsd-lite.txt"
-    else
-      MakeRelease "md5-freebsd.txt"
-    fi
+    MakeRelease "md5-freebsd.txt"
   elif [ "$dockerType" = "web" ]; then
     echo "web only"
   else
     BuildRelease
-    if [ "$useLite" = true ]; then
-      MakeRelease "md5-lite.txt"
-    else
-      MakeRelease "md5.txt"
-    fi
+    MakeRelease "md5.txt"
   fi
 elif [ "$buildType" = "prepare" ]; then
   if [ "$dockerType" = "docker-multiplatform" ]; then
@@ -707,34 +672,19 @@ elif [ "$buildType" = "prepare" ]; then
   fi
 elif [ "$buildType" = "zip" ]; then
   if [ -n "$otherParam" ]; then
-    if [ "$useLite" = true ]; then
-      MakeRelease "$otherParam-lite.txt"
-    else
-      MakeRelease "$otherParam.txt"
-    fi
+    MakeRelease "$otherParam.txt"
   elif [ -n "$dockerType" ]; then
-    if [ "$useLite" = true ]; then
-      MakeRelease "$dockerType-lite.txt"
-    else
-      MakeRelease "$dockerType.txt"
-    fi
+    MakeRelease "$dockerType.txt"
   else
-    if [ "$useLite" = true ]; then
-      MakeRelease "md5-lite.txt"
-    else
-      MakeRelease "md5.txt"
-    fi
+    MakeRelease "md5.txt"
   fi
 else
   echo -e "Parameter error"
-  echo -e "Usage: $0 {dev|beta|release|zip|prepare} [docker|docker-multiplatform|linux_musl_arm|linux_musl|android|freebsd|web] [lite] [other_params]"
+  echo -e "Usage: $0 {dev|beta|release|zip|prepare} [docker|docker-multiplatform|linux_musl_arm|linux_musl|android|freebsd|web] [other_params]"
   echo -e "Examples:"
   echo -e "  $0 dev"
-  echo -e "  $0 dev lite"
   echo -e "  $0 dev docker"
-  echo -e "  $0 dev docker lite"
   echo -e "  $0 release"
-  echo -e "  $0 release lite"
-  echo -e "  $0 release docker lite"
+  echo -e "  $0 release docker"
   echo -e "  $0 release linux_musl"
 fi

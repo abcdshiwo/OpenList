@@ -2,6 +2,7 @@ package op
 
 import (
 	"context"
+	"net/url"
 	stdpath "path"
 	"strconv"
 	"strings"
@@ -48,7 +49,11 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 	}
 
-	objs, err, _ := listG.Do(key, func() ([]model.Obj, error) {
+	flightKey := key
+	if base, ok := ctx.Value(conf.ThumbnailBaseURLKey).(*url.URL); ok && storage.Config().NoCache {
+		flightKey += ":" + strconv.Quote(base.String())
+	}
+	objs, err, _ := listG.Do(flightKey, func() ([]model.Obj, error) {
 		dir, err := GetUnwrap(ctx, storage, path)
 		if err != nil {
 			return nil, errors.WithMessage(err, "failed get dir")
@@ -193,7 +198,7 @@ func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj
 
 	if !dirCacheExists || refreshList {
 		var obj model.Obj
-		list(ctx, storage, dir, model.ListArgs{Refresh: refreshList}, func(objs []model.Obj) error {
+		_, err := list(ctx, storage, dir, model.ListArgs{Refresh: refreshList}, func(objs []model.Obj) error {
 			for _, f := range objs {
 				if f.GetName() == name {
 					if excludeTemp && model.ObjHasMask(f, model.Temp) {
@@ -207,6 +212,10 @@ func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj
 		})
 		if obj != nil {
 			return obj, nil
+		}
+		// A file in the parent path means the object is missing, not a failed listing.
+		if err != nil && !errs.IsNotFoundError(err) && !errors.Is(errors.Cause(err), errs.NotFolder) {
+			return nil, errors.WithMessage(err, "failed to get obj")
 		}
 	}
 	log.Debugf("cant find obj with name: %s", name)
@@ -233,7 +242,10 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 	if mode == -1 {
 		mode = storage.(driver.LinkCacheModeResolver).ResolveLinkCacheMode(path)
 	}
-	typeKey := args.Type
+	typeKey := "proxy/" + args.Type
+	if args.Redirect {
+		typeKey = "redirect/" + args.Type
+	}
 	if mode&driver.LinkCacheIP != 0 {
 		typeKey += "/" + args.IP
 	}
@@ -242,8 +254,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 	}
 	key := Key(storage, path)
 	if ol, exists := Cache.linkCache.GetType(key, typeKey); exists {
-		if ol.link.Expiration != nil ||
-			ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
+		if ol.acquire() {
 			return ol.link, ol.obj, nil
 		}
 	}
@@ -261,9 +272,12 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed get link")
 		}
-		ol := &objWithLink{link: link, obj: file}
-		if link.Expiration != nil {
-			Cache.linkCache.SetTypeWithTTL(key, typeKey, ol, *link.Expiration)
+		ol, err := admitLink(link, file)
+		if err != nil {
+			return nil, err
+		}
+		if ol.policy.expiration != nil {
+			Cache.linkCache.SetTypeWithTTL(key, typeKey, ol, *ol.policy.expiration)
 		} else {
 			Cache.linkCache.SetTypeWithExpirable(key, typeKey, ol, &link.SyncClosers)
 		}
@@ -274,7 +288,7 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		if err != nil {
 			return nil, nil, err
 		}
-		if ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
+		if ol.acquire() {
 			return ol.link, ol.obj, nil
 		}
 	}
@@ -460,6 +474,7 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 	if model.ObjHasMask(srcRawObj, model.NoRename) {
 		return errors.WithStack(errs.PermissionDenied)
 	}
+	oldName := srcRawObj.GetName()
 	srcObj := model.UnwrapObjName(srcRawObj)
 
 	var newObj model.Obj
@@ -477,19 +492,19 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 
 	dirKey := Key(storage, stdpath.Dir(srcPath))
 	if !srcRawObj.IsDir() {
-		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, srcRawObj.GetName()))
+		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, oldName))
 		Cache.linkCache.DeleteKey(stdpath.Join(dirKey, dstName))
 	}
 	if !storage.Config().NoCache {
 		if cache, exist := Cache.dirCache.Get(dirKey); exist {
 			if srcRawObj.IsDir() {
-				Cache.deleteDirectoryTree(stdpath.Join(dirKey, srcRawObj.GetName()))
+				Cache.deleteDirectoryTree(stdpath.Join(dirKey, oldName))
 			}
 			if newObj == nil {
 				newObj = &model.ObjWrapMask{Obj: &model.ObjWrapName{Name: dstName, Obj: srcObj}, Mask: model.Temp}
 			}
 			newObj = wrapObjName(storage, newObj)
-			cache.UpdateObject(srcRawObj.GetName(), newObj)
+			cache.UpdateObject(oldName, newObj)
 		}
 	}
 
@@ -513,7 +528,7 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 	srcPath = utils.FixAndCleanPath(srcPath)
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	if dstDirPath == stdpath.Dir(srcPath) {
-		return errors.New("copy in place")
+		return errors.WithStack(errs.NotImplement)
 	}
 	srcRawObj, err := Get(ctx, storage, srcPath, true)
 	if err != nil {
@@ -631,7 +646,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 			if err != nil {
 				return errors.WithMessagef(err, "while uploading, failed remove existing file which size = 0")
 			}
-		} else if storage.Config().NoOverwriteUpload {
+		} else if storage.Config().NoOverwriteUpload && ctx.Value(conf.SkipNoOverwriteKey) == nil {
 			// try to rename old obj
 			err = Rename(ctx, storage, dstPath, tempName)
 			if err != nil {
@@ -778,7 +793,7 @@ func GetDirectUploadTools(storage driver.Driver) []string {
 	return du.GetDirectUploadTools()
 }
 
-func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver, dstDirPath, dstName string, fileSize int64) (any, error) {
+func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver, dstDirPath, dstName string, fileSize int64, overwrite bool) (any, error) {
 	du, ok := storage.(driver.DirectUploader)
 	if !ok {
 		return nil, errors.WithStack(errs.NotImplement)
@@ -788,9 +803,15 @@ func GetDirectUploadInfo(ctx context.Context, tool string, storage driver.Driver
 	}
 	dstDirPath = utils.FixAndCleanPath(dstDirPath)
 	dstPath := stdpath.Join(dstDirPath, dstName)
-	_, err := Get(ctx, storage, dstPath)
-	if err == nil {
-		return nil, errors.WithStack(errs.ObjectAlreadyExists)
+	var err error
+	if !overwrite {
+		_, err = Get(ctx, storage, dstPath)
+		if err == nil {
+			return nil, errors.WithStack(errs.ObjectAlreadyExists)
+		}
+		if !errs.IsObjectNotFound(err) {
+			return nil, errors.WithMessage(err, "failed to check if object exists")
+		}
 	}
 	err = MakeDir(ctx, storage, dstDirPath)
 	if err != nil {

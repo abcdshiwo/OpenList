@@ -17,10 +17,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/internal/task_group"
-	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/torrent"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/tache"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -57,7 +55,7 @@ func (t *TransferTask) Run() error {
 			if err != nil {
 				return err
 			}
-			r, err := rr.RangeRead(t.Ctx(), http_range.Range{Length: t.GetTotalBytes()})
+			r, err := stream.NewResumableReader(t.Ctx(), rr, t.GetTotalBytes())
 			if err != nil {
 				return err
 			}
@@ -140,7 +138,7 @@ func transferStd(ctx context.Context, tempDir, dstDirPath string, deletePolicy D
 			TaskData: fs.TaskData{
 				TaskExtension: task.TaskExtension{
 					Creator: taskCreator,
-					ApiUrl:  common.GetApiUrl(ctx),
+					ApiUrl:  conf.GetApiUrl(ctx),
 				},
 				SrcActualPath: stdpath.Join(tempDir, entry.Name()),
 				DstActualPath: dstDirActualPath,
@@ -276,7 +274,7 @@ func transferObj(ctx context.Context, tempDir, dstDirPath string, deletePolicy D
 			TaskData: fs.TaskData{
 				TaskExtension: task.TaskExtension{
 					Creator: taskCreator,
-					ApiUrl:  common.GetApiUrl(ctx),
+					ApiUrl:  conf.GetApiUrl(ctx),
 				},
 				SrcActualPath: stdpath.Join(srcObjActualPath, obj.GetName()),
 				DstActualPath: dstDirActualPath,
