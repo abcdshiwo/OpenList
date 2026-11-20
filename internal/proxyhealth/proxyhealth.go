@@ -83,7 +83,9 @@ func (c *Checker) probe(rawurl string) {
 		conn, err = d.Dial("tcp", addr)
 	}
 	ok := err == nil
-	if conn != nil {
+	// Only close a successfully established connection; a failed dial may
+	// return a partially initialized conn whose Close panics.
+	if ok && conn != nil {
 		_ = conn.Close()
 	}
 	c.mu.Lock()
