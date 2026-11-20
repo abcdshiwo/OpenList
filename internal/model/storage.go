@@ -38,6 +38,10 @@ type Proxy struct {
 	// PlayProxyURL is used for playback (/p/) links (players, open-with).
 	// When empty, playback falls back to DownProxyURL.
 	PlayProxyURL string `json:"play_proxy_url"`
+	// Proxy group selections (0 = none). When set, link generation picks the
+	// first healthy node from the group, overriding the raw URL fields.
+	DownProxyGroupID uint `json:"down_proxy_group_id"`
+	PlayProxyGroupID uint `json:"play_proxy_group_id"`
 	// Disable sign for DownProxyURL
 	DisableProxySign bool `json:"disable_proxy_sign"`
 }

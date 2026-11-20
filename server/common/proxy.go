@@ -12,6 +12,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/proxyhealth"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -155,13 +157,34 @@ func generateProxyURL(baseURL string, storage *model.Storage, reqPath string) st
 	)
 }
 
+// resolveDownProxyBase returns the download proxy base: the first healthy
+// node of the selected group, or the raw down_proxy_url when no group is set.
+func resolveDownProxyBase(storage *model.Storage) string {
+	if storage.DownProxyGroupID > 0 {
+		if g, err := op.GetProxyGroup(storage.DownProxyGroupID); err == nil && len(g.Nodes) > 0 {
+			return proxyhealth.Default.PickHealthy(g.Nodes)
+		}
+	}
+	return storage.DownProxyURL
+}
+
+// resolvePlayProxyBase mirrors resolveDownProxyBase for playback links.
+func resolvePlayProxyBase(storage *model.Storage) string {
+	if storage.PlayProxyGroupID > 0 {
+		if g, err := op.GetProxyGroup(storage.PlayProxyGroupID); err == nil && len(g.Nodes) > 0 {
+			return proxyhealth.Default.PickHealthy(g.Nodes)
+		}
+	}
+	return storage.PlayProxyURL
+}
+
 func GenerateDownProxyURL(storage *model.Storage, reqPath string) string {
-	return generateProxyURL(storage.DownProxyURL, storage, reqPath)
+	return generateProxyURL(resolveDownProxyBase(storage), storage, reqPath)
 }
 
 // GeneratePlayProxyURL builds the playback proxy URL used by /p/ links.
 // Returns "" when play_proxy_url is unset so callers fall back to the
 // download proxy URL (backward compatible).
 func GeneratePlayProxyURL(storage *model.Storage, reqPath string) string {
-	return generateProxyURL(storage.PlayProxyURL, storage, reqPath)
+	return generateProxyURL(resolvePlayProxyBase(storage), storage, reqPath)
 }

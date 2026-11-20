@@ -197,6 +197,14 @@ func admin(g *gin.RouterGroup) {
 	storage.POST("/disable", handles.DisableStorage)
 	storage.POST("/load_all", handles.LoadAllStorages)
 
+	proxyGroup := g.Group("/proxy_group")
+	proxyGroup.GET("/list", handles.ListProxyGroups)
+	proxyGroup.GET("/get", handles.GetProxyGroup)
+	proxyGroup.GET("/health", handles.ProxyGroupHealth)
+	proxyGroup.POST("/create", handles.CreateProxyGroup)
+	proxyGroup.POST("/update", handles.UpdateProxyGroup)
+	proxyGroup.POST("/delete", handles.DeleteProxyGroup)
+
 	driver := g.Group("/driver")
 	driver.GET("/list", handles.ListDriverInfo)
 	driver.GET("/names", handles.ListDriverNames)

@@ -15,6 +15,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/proxyhealth"
 	"github.com/OpenListTeam/OpenList/v4/internal/transcode"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server"
@@ -97,6 +99,8 @@ func Start() {
 	if transcode.IsEnabled() {
 		transcode.Default().Start()
 	}
+	// Proxy group health checker drives within-group primary/backup failover.
+	go proxyhealth.Default.Run(op.ProxyGroupNodes)
 	if !flags.Debug && !flags.Dev {
 		gin.SetMode(gin.ReleaseMode)
 	}
