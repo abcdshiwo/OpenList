@@ -43,9 +43,19 @@ func Search(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	nodes, total, err := search.SearchFiltered(c, req.SearchReq, func(node model.SearchNode) bool {
-		return isSearchNodeAccessible(user, node, req.Password, op.GetNearestMeta)
-	})
+	var nodes []model.SearchNode
+	var total int64
+	if user.IsAdmin() {
+		// Admin can access every node (see hides + access without password), so
+		// per-node filtering is a no-op. Use paginated search directly; the
+		// SearchFiltered fallback would otherwise scan ALL matches batch by
+		// batch and time out on high-hit keywords (e.g. "mp4").
+		nodes, total, err = search.Search(c, req.SearchReq)
+	} else {
+		nodes, total, err = search.SearchFiltered(c, req.SearchReq, func(node model.SearchNode) bool {
+			return isSearchNodeAccessible(user, node, req.Password, op.GetNearestMeta)
+		})
+	}
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
