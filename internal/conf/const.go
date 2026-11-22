@@ -72,10 +72,11 @@ const (
 	SeedDefaultTrackers     = "seed_default_trackers"
 
 	// index
-	SearchIndex     = "search_index"
-	AutoUpdateIndex = "auto_update_index"
-	IgnorePaths     = "ignore_paths"
-	MaxIndexDepth   = "max_index_depth"
+	SearchIndex           = "search_index"
+	IndexBuildConcurrency = "index_build_concurrency"
+	AutoUpdateIndex       = "auto_update_index"
+	IgnorePaths           = "ignore_paths"
+	MaxIndexDepth         = "max_index_depth"
 
 	// aria2
 	Aria2Uri    = "aria2_uri"
